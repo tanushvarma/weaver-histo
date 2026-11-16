@@ -1,0 +1,12 @@
+numpy
+scipy
+scikit-image
+scikit-learn
+pandas
+pillow
+tifffile
+matplotlib
+opencv-python-headless
+slideio
+streamlit>=1.50
+streamlit-image-coordinates
