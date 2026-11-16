@@ -1,0 +1,29 @@
+# Python virtual environment and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Trained models (re-created by teaching the app); keep the folder itself
+models/*
+!models/.gitkeep
+
+# Slides, images and analysis outputs: too large for GitHub, keep them local
+*.vsi
+*.ets
+*.tif
+*.tiff
+*.svs
+*.ndpi
+outputs/
+results/
+*.csv
+
+# Editor / OS
+.vscode/
+.streamlit/secrets.toml
+Thumbs.db
+desktop.ini
+.DS_Store
