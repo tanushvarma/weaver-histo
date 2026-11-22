@@ -1,22 +1,15 @@
 """Regression tests on synthetic scenes with known ground truth.
 
-Run:  python -m pytest tests -q      (or)      python tests/test_pipeline.py
+Run:  python -m pytest -m "not slow"
 Tolerances reflect measured behaviour; they are not tuned to be loose.
 """
-import sys
-from pathlib import Path
+import numpy as np
+import pytest
+from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "tests"))
-
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-from PIL import Image  # noqa: E402
-
-from make_synthetic import build_scene  # noqa: E402
-from weaver_histo import Params, analyze  # noqa: E402
-from weaver_histo.loading import load_image  # noqa: E402
+from make_synthetic import build_scene
+from weaver_histo import Params, analyze
+from weaver_histo.loading import load_image
 
 
 def iou(a, b):
@@ -156,6 +149,3 @@ def test_loading_formats_and_downscale(tmp_path):
     out, ds = load_image(tmp_path / "big.png", max_side=200)
     assert max(out.shape[:2]) == 200 and ds == pytest.approx(4.0, rel=0.01)
 
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-q"]))

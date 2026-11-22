@@ -134,9 +134,13 @@ class SlideioReader(SlideReader):
 
     def __init__(self, path, scene_index: Optional[int] = None, um_per_px: Optional[float] = None,
                  driver: Optional[str] = None):
-        import slideio
-
         self.path = Path(path)
+        try:
+            import slideio
+        except ImportError as err:
+            raise ImportError(
+                f'Reading {self.path.suffix.lower()} files needs the optional dependency: pip install "weaver-histo[vsi]"'
+            ) from err
         drv = driver or SLIDEIO_DRIVERS.get(self.path.suffix.lower(), "GDAL")
         self._slide = slideio.open_slide(str(self.path), drv)
         self._infos = []

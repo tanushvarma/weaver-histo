@@ -1,27 +1,20 @@
 """Whole-slide mode: readers, section finder, tile pipeline, trainable models.
 
 All on synthetic slides with known ground truth (planted nuclei, spiral hydrogel).
-Run:  python -m pytest tests -q        (the slide tests take a few minutes)
+Run:  python -m pytest -m slow
 """
-import sys
-from pathlib import Path
+import cv2
+import numpy as np
+import pytest
+from PIL import Image
+from scipy import ndimage as ndi
+from scipy.spatial import cKDTree
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "tests"))
-
-import cv2  # noqa: E402
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-from PIL import Image  # noqa: E402
-from scipy import ndimage as ndi  # noqa: E402
-from scipy.spatial import cKDTree  # noqa: E402
-
-from make_synthetic import build_slide  # noqa: E402
-from weaver_histo import ml, segment  # noqa: E402
-from weaver_histo.readers import FlatReader, open_slide  # noqa: E402
-from weaver_histo.sections import find_sections  # noqa: E402
-from weaver_histo.slide import SlideParams, _region_masks, analyze_slide  # noqa: E402
+from make_synthetic import build_slide
+from weaver_histo import ml, segment
+from weaver_histo.readers import FlatReader, open_slide
+from weaver_histo.sections import find_sections
+from weaver_histo.slide import SlideParams, _region_masks, analyze_slide
 
 UM = 0.5
 

@@ -1,18 +1,15 @@
 """Single image / region mode (PNG, JPG, TIFF): one image in memory, one analysis."""
 import io
-import sys
 import zipfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import numpy as np
+import pandas as pd
+import streamlit as st
+from PIL import Image
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import streamlit as st  # noqa: E402
-from PIL import Image  # noqa: E402
-
-from weaver_histo import Params, analyze, stains, viz  # noqa: E402
-from weaver_histo.loading import load_image  # noqa: E402
+from weaver_histo import Params, analyze, stains, viz
+from weaver_histo.loading import load_image
 
 
 def png_bytes(arr: np.ndarray) -> bytes:

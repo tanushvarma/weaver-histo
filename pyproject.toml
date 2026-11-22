@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "weaver-histo"
+version = "0.1.0"
+description = "Nuclei, cell-state, infiltration, collagen capsule and construct geometry from H&E and Masson's trichrome slides of bioprinted hydrogels."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Tanush Varma" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "numpy>=2.4",
+    "scipy>=1.17",
+    "scikit-image>=0.26",
+    "scikit-learn>=1.9",
+    "pandas>=3.1",
+    "pillow>=13.0",
+    "tifffile>=2026.3",
+    "matplotlib>=3.11",
+    "opencv-python-headless>=5.1",
+]
+
+[project.optional-dependencies]
+vsi = ["slideio"]
+app = ["streamlit>=1.50", "streamlit-image-coordinates"]
+dev = ["pytest", "ruff"]
+all = ["weaver-histo[vsi,app]"]
+
+[project.urls]
+Repository = "https://github.com/tanushvarma/weaver-histo"
+
+[project.scripts]
+weaver-histo = "weaver_histo.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/weaver_histo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ['slow: whole-slide tests (deselect with -m "not slow")']
+filterwarnings = [
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:skimage.*",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["weaver_histo"]

@@ -2,24 +2,20 @@
 cell resolution, and teach the tool what *your* hydrogel and nuclei look like."""
 import base64
 import io
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+import numpy as np
+import pandas as pd
+import streamlit as st
+from PIL import Image
 
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import streamlit as st  # noqa: E402
-from PIL import Image  # noqa: E402
+from weaver_histo import ml, viz
+from weaver_histo.pipeline import Params
+from weaver_histo.readers import open_slide
+from weaver_histo.sections import draw_sections, find_sections
+from weaver_histo.slide import SlideParams, analyze_slide
 
-from weaver_histo import ml, viz  # noqa: E402
-from weaver_histo.pipeline import Params  # noqa: E402
-from weaver_histo.readers import open_slide  # noqa: E402
-from weaver_histo.sections import draw_sections, find_sections  # noqa: E402
-from weaver_histo.slide import SlideParams, analyze_slide  # noqa: E402
-
-MODELS = ROOT / "models"
+MODELS = Path(__file__).resolve().parents[1] / "models"
 CLASS_COLOURS = [(150, 150, 150), (0, 170, 0), (255, 0, 255), (0, 170, 255), (255, 160, 0)]
 SPEED = {"Quick preview (up to 8 tiles per section)": 8,
          "Standard (up to 24 tiles per section)": 24,

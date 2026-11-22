@@ -2,14 +2,7 @@
 
 Run from the project root:   streamlit run app/streamlit_app.py
 """
-import sys
-from pathlib import Path
-
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent / "src"))
-
-import streamlit as st  # noqa: E402
+import streamlit as st
 
 st.set_page_config(page_title="Weaver Lab Histology Analyzer", layout="wide")
 st.title("Weaver Lab histology analyzer")
