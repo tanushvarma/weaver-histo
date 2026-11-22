@@ -1,7 +1,7 @@
 """Whole-slide mode: readers, section finder, tile pipeline, trainable models.
 
 All on synthetic slides with known ground truth (planted nuclei, spiral hydrogel).
-Run:  python -m pytest -m slow
+Tests that analyse whole slides are marked slow.
 """
 
 import cv2
@@ -21,13 +21,26 @@ UM = 0.5
 
 
 @pytest.fixture(scope="module")
-def slide(tmp_path_factory):
+def slide_file(tmp_path_factory):
     img, truth = build_slide("he", n_sections=2)
     path = tmp_path_factory.mktemp("slides") / "slide_he.tif"
     Image.fromarray(img).save(path)
-    reader = FlatReader(path, UM)
+    return path, img, truth, FlatReader(path, UM)
+
+
+@pytest.fixture(scope="module")
+def slide(slide_file):
+    path, img, truth, reader = slide_file
     res = analyze_slide(reader, SlideParams(stain="he", tile_um=450.0, max_tiles_per_section=None))
     return path, img, truth, reader, res
+
+
+@pytest.fixture(scope="module")
+def one_section(tmp_path_factory):
+    img, _ = build_slide("he", n_sections=1)
+    path = tmp_path_factory.mktemp("one") / "one.tif"
+    Image.fromarray(img).save(path)
+    return path
 
 
 def truth_matrix_roi(truth, reader, roi_um, shape):
@@ -40,8 +53,8 @@ def truth_matrix_roi(truth, reader, roi_um, shape):
     return cv2.resize(crop, (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST) > 0
 
 
-def test_flat_reader_geometry_and_padding(slide):
-    _, img, _, reader, _ = slide
+def test_flat_reader_geometry_and_padding(slide_file):
+    path, img, _, reader = slide_file
     # 1:1 read equals the array slice
     got = reader.read_um(100, 50, 200, 100, UM)
     assert got.shape == (200, 400, 3)
@@ -53,14 +66,15 @@ def test_flat_reader_geometry_and_padding(slide):
     assert pad.shape == (200, 200, 3) and (pad[:90, :90] == 255).all()
     # no pixel size -> clear error
     with pytest.raises(ValueError):
-        FlatReader(slide[0]).read_um(0, 0, 10, 10, 1.0)
+        FlatReader(path).read_um(0, 0, 10, 10, 1.0)
 
 
-def test_slideio_gdal_reader_matches_flat(slide):
+@pytest.mark.slow
+def test_slideio_gdal_reader_matches_flat(slide_file):
     pytest.importorskip("slideio")
     from weaver_histo.readers import SlideioReader
 
-    path, _, _, flat, _ = slide
+    path, _, _, flat = slide_file
     rd = SlideioReader(path, um_per_px=UM, driver="GDAL")
     assert (rd.width_px, rd.height_px) == (flat.width_px, flat.height_px)
     a = rd.read_um(200, 100, 600, 400, 1.0).astype(float)
@@ -69,6 +83,7 @@ def test_slideio_gdal_reader_matches_flat(slide):
     assert open_slide(path, um_per_px=UM).width_px == flat.width_px
 
 
+@pytest.mark.slow
 def test_sections_found_on_slide(slide):
     _, _, truth, _, res = slide
     assert len(res.sections) == 2
@@ -89,6 +104,7 @@ def test_label_card_smudge_is_not_a_section():
     assert len(secs) == 1 and secs[0].bbox[0] >= 380
 
 
+@pytest.mark.slow
 def test_nuclei_counts_across_tile_seams(slide):
     _, _, truth, _, res = slide
     for sr, t in zip(res.sections, truth["sections"], strict=True):
@@ -101,6 +117,7 @@ def test_nuclei_counts_across_tile_seams(slide):
         assert abs(S["pyknosis_index_pct"] - t["pyk_idx_pct"]) <= 1.5
 
 
+@pytest.mark.slow
 def test_infiltration_and_geometry(slide):
     _, _, truth, _, res = slide
     for sr, t in zip(res.sections, truth["sections"], strict=True):
@@ -111,6 +128,7 @@ def test_infiltration_and_geometry(slide):
         assert 0 < S["nuclei_per_mm2"] < 5000 and S["pct_tissue_analyzed"] > 90
 
 
+@pytest.mark.slow
 def test_slide_wide_reference_nucleus(slide):
     """Both sections are judged against the same typical nucleus."""
     _, _, _, _, res = slide
@@ -118,11 +136,9 @@ def test_slide_wide_reference_nucleus(slide):
     assert np.ptp(refs) == 0 and refs[0] > 0
 
 
-def test_tile_size_does_not_change_results(tmp_path):
-    img, _ = build_slide("he", n_sections=1)
-    p = tmp_path / "one.tif"
-    Image.fromarray(img).save(p)
-    rd = FlatReader(p, UM)
+@pytest.mark.slow
+def test_tile_size_does_not_change_results(one_section):
+    rd = FlatReader(one_section, UM)
     a = analyze_slide(rd, SlideParams(stain="he", tile_um=400.0, max_tiles_per_section=None)).summary.iloc[0]
     b = analyze_slide(rd, SlideParams(stain="he", tile_um=1500.0, max_tiles_per_section=None)).summary.iloc[0]
     assert a["tiles_analyzed"] > b["tiles_analyzed"]
@@ -130,22 +146,17 @@ def test_tile_size_does_not_change_results(tmp_path):
     assert abs(a["n_pyknotic"] - b["n_pyknotic"]) <= 1
 
 
-def test_sampling_reports_what_it_did(tmp_path):
-    img, _ = build_slide("he", n_sections=1)
-    p = tmp_path / "one.tif"
-    Image.fromarray(img).save(p)
-    res = analyze_slide(FlatReader(p, UM), SlideParams(stain="he", tile_um=400.0, max_tiles_per_section=3))
+@pytest.mark.slow
+def test_sampling_reports_what_it_did(one_section):
+    res = analyze_slide(FlatReader(one_section, UM), SlideParams(stain="he", tile_um=400.0, max_tiles_per_section=3))
     S = res.sections[0].summary
     assert S["tiles_analyzed"] == 3 < S["tiles_total"] and S["pct_tissue_analyzed"] < 100
     assert any("Sampled 3 of" in n for n in res.sections[0].notes)
 
 
-def test_errors_are_clear(tmp_path):
-    img, _ = build_slide("he", n_sections=1)
-    p = tmp_path / "one.tif"
-    Image.fromarray(img).save(p)
+def test_errors_are_clear(one_section, tmp_path):
     with pytest.raises(ValueError, match="Pixel size unknown"):
-        analyze_slide(FlatReader(p), SlideParams())
+        analyze_slide(FlatReader(one_section), SlideParams())
     blank = tmp_path / "blank.png"
     Image.fromarray(np.full((600, 900, 3), 245, np.uint8)).save(blank)
     with pytest.raises(ValueError, match="No tissue"):
@@ -165,6 +176,7 @@ def _label_by_truth(cells, truth):
     return out
 
 
+@pytest.mark.slow
 def test_state_classifier_learns_and_persists(slide, tmp_path):
     _, _, truth, _, res = slide
     cells = res.cells.reset_index(drop=True)
@@ -190,6 +202,7 @@ def test_state_classifier_learns_and_persists(slide, tmp_path):
         ml.StateClassifier().fit(train.head(12), ["intact"] * 12)  # needs two different states
 
 
+@pytest.mark.slow
 def test_pixel_classifier_learns_hydrogel_from_clicks(slide, tmp_path):
     _, _, truth, reader, res = slide
     s1 = res.sections[0]
@@ -217,6 +230,7 @@ def test_pixel_classifier_learns_hydrogel_from_clicks(slide, tmp_path):
     assert iou > 0.88 and 0.9 < m.sum() / tm2.sum() < 1.12
 
 
+@pytest.mark.slow
 def test_region_model_is_used_by_the_pipeline(slide):
     _, _, truth, reader, res = slide
     s1 = res.sections[0]
