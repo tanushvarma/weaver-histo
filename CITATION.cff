@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+title: weaver-histo
+type: software
+authors:
+  - family-names: Varma
+    given-names: Tanush
+    affiliation: Weaver Lab, Arizona State University
+version: 0.1.0
+repository-code: https://github.com/tanushvarma/weaver-histo
