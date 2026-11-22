@@ -13,10 +13,11 @@ stain, scanner and tissue instead of relying on fixed thresholds:
 Both keep their training examples inside the saved model file, so teaching more
 later *adds* to what they already know instead of starting over.
 """
+
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -30,17 +31,16 @@ DEFAULT_PIXEL_CLASSES = ("background", "host_tissue", "matrix")
 DEFAULT_STATES = ("intact", "pyknotic", "pale", "fragment")
 
 
-# =========================================================== pixel classifier
 def _gauss(a: np.ndarray, sigma: float) -> np.ndarray:
     return ndi.gaussian_filter(a, sigma, output=np.float32, mode="reflect")
 
 
 def suppress_nuclei(rgb: np.ndarray, um_per_px: float, stain: str = "he") -> np.ndarray:
-    """Paint dark nuclei over with the colour of their surroundings (normalised convolution).
-
-    Nuclei sit in hydrogel and host tissue alike; left in, they make hydrogel pixels look like
-    host tissue. The classifier should judge the material *between* the cells."""
+    """Paint nuclei over with the colour of their surroundings (normalised convolution)."""
+    # Nuclei sit in hydrogel and host tissue alike; left in, they make hydrogel pixels look like host
+    # tissue. The classifier should judge the material between the cells.
     from skimage import filters, morphology
+
     sig, _, _, floor = stains.separate(rgb, stain)
     sm = ndi.gaussian_filter(sig, max(0.7, 1.0 / um_per_px))
     tissue = color.rgb2gray(rgb) < 0.9
@@ -64,25 +64,25 @@ def suppress_nuclei(rgb: np.ndarray, um_per_px: float, stain: str = "he") -> np.
     return np.clip(out, 0, 255).astype(rgb.dtype) if rgb.dtype == np.uint8 else out
 
 
-def pixel_features(rgb: np.ndarray, um_per_px: float, stain: str = "he",
-                   sigmas_um: Sequence[float] = (1.0, 2.5, 6.0)) -> np.ndarray:
-    """Multi-scale colour + texture features, float32 (H, W, F).
-
-    Scales are in microns, so a model trained at one um/px behaves the same on any image
-    read at that um/px. Channels: L, a, b (CIE Lab) and the two stain concentrations."""
+def pixel_features(
+    rgb: np.ndarray, um_per_px: float, stain: str = "he", sigmas_um: Sequence[float] = (1.0, 2.5, 6.0)
+) -> np.ndarray:
+    """Multi-scale colour and texture features as float32 (H, W, F)."""
+    # Scales are in microns, so a model trained at one um/px behaves the same on any image read at
+    # that um/px. Channels: CIE Lab L, a, b and the two stain concentrations.
     rgb = suppress_nuclei(rgb, um_per_px, stain)
     lab = color.rgb2lab(rgb).astype(np.float32)
     sig, second, _, _ = stains.separate(rgb, stain)
     chans = [lab[..., 0], lab[..., 1], lab[..., 2], sig.astype(np.float32), second.astype(np.float32)]
     sg = [max(0.7, s / um_per_px) for s in sigmas_um]
     feats = []
-    for c in chans:                                    # smoothed colour at every scale
+    for c in chans:
         for s in sg:
             feats.append(_gauss(c, s))
-    for c in (chans[0], chans[3]):                     # edges (two scales)
+    for c in (chans[0], chans[3]):
         for s in sg[:2]:
             feats.append(ndi.gaussian_gradient_magnitude(c, s, output=np.float32))
-    for s in sg[:2]:                                   # blobs and local variation of brightness
+    for s in sg[:2]:
         feats.append(ndi.gaussian_laplace(chans[0], s, output=np.float32) * s * s)
         m1, m2 = _gauss(chans[0], s), _gauss(chans[0] ** 2, s)
         feats.append(np.sqrt(np.maximum(m2 - m1 * m1, 0)))
@@ -92,31 +92,36 @@ def pixel_features(rgb: np.ndarray, um_per_px: float, stain: str = "he",
 def annotations_from_points(shape, points, radius_px: int = 6) -> np.ndarray:
     """Label map from clicks. points = [(x, y, class_number), ...] with class_number >= 1."""
     lab = np.zeros(shape[:2], np.uint8)
-    yy, xx = np.ogrid[:shape[0], :shape[1]]
+    yy, xx = np.ogrid[: shape[0], : shape[1]]
     for x, y, k in points:
-        lab[(yy - y) ** 2 + (xx - x) ** 2 <= radius_px ** 2] = k
+        lab[(yy - y) ** 2 + (xx - x) ** 2 <= radius_px**2] = k
     return lab
 
 
 class PixelClassifier:
     """Random forest on multi-scale pixel features."""
 
-    def __init__(self, classes: Sequence[str] = DEFAULT_PIXEL_CLASSES, um_per_px: float = 2.0,
-                 stain: str = "he", sigmas_um: Sequence[float] = (1.0, 2.5, 6.0)):
+    def __init__(
+        self,
+        classes: Sequence[str] = DEFAULT_PIXEL_CLASSES,
+        um_per_px: float = 2.0,
+        stain: str = "he",
+        sigmas_um: Sequence[float] = (1.0, 2.5, 6.0),
+    ):
         self.classes = list(classes)
         self.um_per_px = float(um_per_px)
         self.stain = stain
         self.sigmas_um = tuple(sigmas_um)
         self.model = None
-        self.X_train: Optional[np.ndarray] = None
-        self.y_train: Optional[np.ndarray] = None
-        self.oob_accuracy_: Optional[float] = None
+        self.X_train: np.ndarray | None = None
+        self.y_train: np.ndarray | None = None
+        self.oob_accuracy_: float | None = None
 
     @property
-    def is_trained(self):
+    def is_trained(self) -> bool:
         return self.model is not None
 
-    def class_number(self, name: str) -> Optional[int]:
+    def class_number(self, name: str) -> int | None:
         return self.classes.index(name) + 1 if name in self.classes else None
 
     def _sample(self, rgb, labels, max_per_class, rng):
@@ -132,8 +137,9 @@ class PixelClassifier:
             ys.append(np.full(idx.size, k, np.int16))
         return (np.concatenate(Xs), np.concatenate(ys)) if Xs else (None, None)
 
-    def fit(self, samples, max_per_class: int = 20000, keep_previous: bool = True, seed: int = 0,
-            n_estimators: int = 120):
+    def fit(
+        self, samples, max_per_class: int = 20000, keep_previous: bool = True, seed: int = 0, n_estimators: int = 120
+    ) -> PixelClassifier:
         """samples: list of (rgb, labels) where labels is 0 (unmarked) or 1..K (class number),
         and rgb was read at self.um_per_px. Adds to earlier training when keep_previous."""
         from sklearn.ensemble import RandomForestClassifier
@@ -164,13 +170,19 @@ class PixelClassifier:
         keep = np.concatenate(keep)
         self.X_train, self.y_train = X[keep], y[keep]
         self.model = RandomForestClassifier(
-            n_estimators=n_estimators, max_depth=14, min_samples_leaf=3, n_jobs=-1,
-            class_weight="balanced_subsample", oob_score=True, random_state=seed)
+            n_estimators=n_estimators,
+            max_depth=14,
+            min_samples_leaf=3,
+            n_jobs=-1,
+            class_weight="balanced_subsample",
+            oob_score=True,
+            random_state=seed,
+        )
         self.model.fit(self.X_train, self.y_train)
         self.oob_accuracy_ = float(self.model.oob_score_)
         return self
 
-    def predict(self, rgb: np.ndarray, stride: Optional[int] = None) -> np.ndarray:
+    def predict(self, rgb: np.ndarray, stride: int | None = None) -> np.ndarray:
         """Class number (1..K) for every pixel. stride>1 predicts on a grid and fills in."""
         if not self.is_trained:
             raise RuntimeError("Model is not trained yet.")
@@ -185,16 +197,31 @@ class PixelClassifier:
             pred = np.repeat(np.repeat(pred, stride, axis=0), stride, axis=1)[:h, :w]
         return pred
 
-    def save(self, path):
+    def save(self, path) -> None:
         import joblib
+
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(dict(kind="pixel", version=MODEL_VERSION, classes=self.classes, um_per_px=self.um_per_px,
-                         stain=self.stain, sigmas_um=self.sigmas_um, model=self.model,
-                         X_train=self.X_train, y_train=self.y_train, oob=self.oob_accuracy_), path, compress=3)
+        joblib.dump(
+            dict(
+                kind="pixel",
+                version=MODEL_VERSION,
+                classes=self.classes,
+                um_per_px=self.um_per_px,
+                stain=self.stain,
+                sigmas_um=self.sigmas_um,
+                model=self.model,
+                X_train=self.X_train,
+                y_train=self.y_train,
+                oob=self.oob_accuracy_,
+            ),
+            path,
+            compress=3,
+        )
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path) -> PixelClassifier:
         import joblib
+
         d = joblib.load(path)
         if d.get("kind") != "pixel":
             raise ValueError("Not a pixel-classifier model file.")
@@ -203,9 +230,16 @@ class PixelClassifier:
         return m
 
 
-# ========================================================== nuclear-state model
-STATE_FEATURES = ["rel_area", "rel_dark", "solidity", "eccentricity", "circularity",
-                  "texture", "core_frac", "peak_ratio"]
+STATE_FEATURES = [
+    "rel_area",
+    "rel_dark",
+    "solidity",
+    "eccentricity",
+    "circularity",
+    "texture",
+    "core_frac",
+    "peak_ratio",
+]
 
 
 def state_features(cells: pd.DataFrame) -> pd.DataFrame:
@@ -215,16 +249,18 @@ def state_features(cells: pd.DataFrame) -> pd.DataFrame:
     # works on the internal pixel table and on the exported micron table alike (only a ratio is used)
     core = c["core_area_px"] if "core_area_px" in c else c["core_area_um2"]
     area = c["area_px"] if "area_px" in c else c["area_um2"]
-    return pd.DataFrame({
-        "rel_area": c["rel_area"].to_numpy(float),
-        "rel_dark": c["rel_dark"].to_numpy(float),
-        "solidity": c["solidity"].to_numpy(float),
-        "eccentricity": c["eccentricity"].to_numpy(float),
-        "circularity": c["circularity"].to_numpy(float),
-        "texture": c["std_signal"].to_numpy(float) / np.maximum(c["mean_signal"].to_numpy(float), eps),
-        "core_frac": core.to_numpy(float) / np.maximum(area.to_numpy(float), eps),
-        "peak_ratio": c["max_signal"].to_numpy(float) / np.maximum(c["core_mean_signal"].to_numpy(float), eps),
-    })[STATE_FEATURES]
+    return pd.DataFrame(
+        {
+            "rel_area": c["rel_area"].to_numpy(float),
+            "rel_dark": c["rel_dark"].to_numpy(float),
+            "solidity": c["solidity"].to_numpy(float),
+            "eccentricity": c["eccentricity"].to_numpy(float),
+            "circularity": c["circularity"].to_numpy(float),
+            "texture": c["std_signal"].to_numpy(float) / np.maximum(c["mean_signal"].to_numpy(float), eps),
+            "core_frac": core.to_numpy(float) / np.maximum(area.to_numpy(float), eps),
+            "peak_ratio": c["max_signal"].to_numpy(float) / np.maximum(c["core_mean_signal"].to_numpy(float), eps),
+        }
+    )[STATE_FEATURES]
 
 
 class StateClassifier:
@@ -232,19 +268,19 @@ class StateClassifier:
 
     def __init__(self):
         self.model = None
-        self.train_X: Optional[pd.DataFrame] = None
-        self.train_y: Optional[np.ndarray] = None
-        self.cv_accuracy_: Optional[float] = None
+        self.train_X: pd.DataFrame | None = None
+        self.train_y: np.ndarray | None = None
+        self.cv_accuracy_: float | None = None
 
     @property
-    def is_trained(self):
+    def is_trained(self) -> bool:
         return self.model is not None
 
     @property
-    def classes(self):
+    def classes(self) -> list[str]:
         return list(self.model.classes_) if self.model is not None else []
 
-    def fit(self, cells: pd.DataFrame, labels, keep_previous: bool = True, seed: int = 0):
+    def fit(self, cells: pd.DataFrame, labels, keep_previous: bool = True, seed: int = 0) -> StateClassifier:
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import StratifiedKFold, cross_val_score
 
@@ -261,8 +297,9 @@ class StateClassifier:
         if len(y) < 10:
             raise ValueError("Label at least ~10 nuclei (more is better).")
         self.train_X, self.train_y = X, y
-        self.model = RandomForestClassifier(n_estimators=250, min_samples_leaf=2, n_jobs=-1,
-                                            class_weight="balanced", random_state=seed)
+        self.model = RandomForestClassifier(
+            n_estimators=250, min_samples_leaf=2, n_jobs=-1, class_weight="balanced", random_state=seed
+        )
         folds = int(min(5, counts.min()))
         if folds >= 2:
             cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
@@ -272,7 +309,7 @@ class StateClassifier:
         self.model.fit(X, y)
         return self
 
-    def predict(self, cells: pd.DataFrame):
+    def predict(self, cells: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         """Returns (state array, confidence array)."""
         if not self.is_trained:
             raise RuntimeError("Model is not trained yet.")
@@ -281,15 +318,27 @@ class StateClassifier:
         idx = proba.argmax(axis=1)
         return self.model.classes_[idx].astype(object), proba.max(axis=1)
 
-    def save(self, path):
+    def save(self, path) -> None:
         import joblib
+
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(dict(kind="state", version=MODEL_VERSION, model=self.model, train_X=self.train_X,
-                         train_y=self.train_y, cv=self.cv_accuracy_), path, compress=3)
+        joblib.dump(
+            dict(
+                kind="state",
+                version=MODEL_VERSION,
+                model=self.model,
+                train_X=self.train_X,
+                train_y=self.train_y,
+                cv=self.cv_accuracy_,
+            ),
+            path,
+            compress=3,
+        )
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path) -> StateClassifier:
         import joblib
+
         d = joblib.load(path)
         if d.get("kind") != "state":
             raise ValueError("Not a nuclear-state model file.")

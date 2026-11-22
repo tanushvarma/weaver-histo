@@ -3,11 +3,12 @@
 Run:  python -m pytest -m "not slow"
 Tolerances reflect measured behaviour; they are not tuned to be loose.
 """
+
 import numpy as np
 import pytest
 from PIL import Image
 
-from make_synthetic import build_scene
+from synthetic import build_scene
 from weaver_histo import Params, analyze
 from weaver_histo.loading import load_image
 
@@ -31,10 +32,10 @@ def tri():
 def test_he_nuclear_states(he):
     _, t, r = he
     S = r.summary
-    assert abs(S["n_intact"] - t["n_intact"]) <= 5          # pale ones may land here
+    assert abs(S["n_intact"] - t["n_intact"]) <= 5  # pale ones may land here
     assert abs(S["n_pyknotic"] - t["n_pyknotic"]) <= 1
     assert abs(S["n_fragments"] - t["n_fragment"]) <= 2
-    assert S["n_pale"] >= 0.6 * t["n_pale"]                  # pale detection is the weakest class
+    assert S["n_pale"] >= 0.6 * t["n_pale"]  # pale detection is the weakest class
     assert abs(S["n_whole_inside_matrix"] - t["n_inside"]) <= 3
 
 
@@ -42,11 +43,11 @@ def test_he_matrix_and_geometry(he):
     _, t, r = he
     assert iou(r.matrix, t["matrix"]) > 0.85
     wall = r.summary["matrix_wall_thickness_median_um"]
-    assert 20 <= wall <= 28                                  # true wall = 22
+    assert 20 <= wall <= 28  # true wall = 22
 
 
 def test_he_regional_pyknosis(he):
-    _, t, r = he
+    _, _, r = he
     # 5 of 25 whole nuclei inside the matrix are pyknotic (20%), 10 of 130 outside (7.7%)
     assert abs(r.summary["inside_pyknosis_index_pct"] - 20) <= 5
     assert abs(r.summary["outside_pyknosis_index_pct"] - 7.7) <= 2
@@ -83,13 +84,13 @@ def test_resolution_invariance_in_microns():
     """Same specimen sampled twice as finely (2x upsample, 0.5 um/px) must give
     the same physical answers: lengths/areas are in um, not pixels."""
     import cv2
+
     img, _ = build_scene("he")
     up = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
     a = analyze(img, Params(stain="he", um_per_px=1.0)).summary
     b = analyze(up, Params(stain="he", um_per_px=0.5)).summary
     assert b["matrix_area_um2"] == pytest.approx(a["matrix_area_um2"], rel=0.05)
-    assert b["matrix_wall_thickness_median_um"] == pytest.approx(
-        a["matrix_wall_thickness_median_um"], rel=0.10)
+    assert b["matrix_wall_thickness_median_um"] == pytest.approx(a["matrix_wall_thickness_median_um"], rel=0.10)
     assert b["tissue_area_um2"] == pytest.approx(a["tissue_area_um2"], rel=0.03)
     assert abs(b["n_whole_nuclei"] - a["n_whole_nuclei"]) <= 0.05 * a["n_whole_nuclei"]
     assert abs(b["n_pyknotic"] - a["n_pyknotic"]) <= 2
@@ -98,7 +99,7 @@ def test_resolution_invariance_in_microns():
 def test_no_nuclei_does_not_crash():
     img = np.full((300, 300, 3), (246, 243, 246), np.uint8)
     yy, xx = np.mgrid[:300, :300]
-    img[((yy - 150) ** 2 + (xx - 150) ** 2) < 100 ** 2] = (226, 165, 200)
+    img[((yy - 150) ** 2 + (xx - 150) ** 2) < 100**2] = (226, 165, 200)
     for stain in ("he", "trichrome"):
         r = analyze(img, Params(stain=stain, um_per_px=1.0))
         assert r.summary["n_objects"] == 0
@@ -120,6 +121,7 @@ def test_normalization_paths_run(norm):
     target = None
     if norm == "reinhard":
         from weaver_histo import stains
+
         target = stains.lab_stats(img)
     r = analyze(img, Params(stain="he", um_per_px=1.0, normalization=norm, reinhard_target=target))
     assert r.summary["n_whole_nuclei"] > 100
@@ -134,6 +136,7 @@ def test_loading_formats_and_downscale(tmp_path):
     assert out.shape == (60, 80, 3) and out.dtype == np.uint8 and ds == 1.0
 
     import tifffile
+
     g16 = rng.integers(0, 65535, (50, 70), dtype=np.uint16)
     tifffile.imwrite(tmp_path / "g.tif", g16)
     out, _ = load_image(tmp_path / "g.tif")
@@ -148,4 +151,3 @@ def test_loading_formats_and_downscale(tmp_path):
     Image.fromarray(big).save(tmp_path / "big.png")
     out, ds = load_image(tmp_path / "big.png", max_side=200)
     assert max(out.shape[:2]) == 200 and ds == pytest.approx(4.0, rel=0.01)
-

@@ -3,10 +3,11 @@
 Named loading.py (not io.py) on purpose: a module called io.py can shadow the
 standard library if a script is ever run from inside this folder.
 """
+
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 Image.MAX_IMAGE_PIXELS = None  # we downscale ourselves
 
@@ -34,19 +35,16 @@ def _to_rgb_uint8(arr: np.ndarray) -> np.ndarray:
     return np.clip(arr, 0, 255).astype(np.uint8)
 
 
-def load_image(src, max_side: int = 3000):
-    """Load an image from a path or file-like object.
+def load_image(src, max_side: int = 3000) -> tuple[np.ndarray, float]:
+    """Load an image as RGB uint8, shrunk to fit max_side.
 
-    Returns (rgb_uint8, downscale) where downscale >= 1 is the factor the image
-    was shrunk by to fit max_side. Multiply the microscope's um/px by it to get
-    the effective um/px of the returned array.
-    """
+    Returns (rgb, downscale); multiply the microscope um/px by downscale for the returned array."""
     arr = None
     try:
-        img = Image.open(src)
-        if img.mode in ("RGB", "RGBA", "L", "LA", "P", "CMYK"):
-            arr = np.asarray(img.convert("RGB"))
-    except Exception:
+        with Image.open(src) as img:
+            if img.mode in ("RGB", "RGBA", "L", "LA", "P", "CMYK"):
+                arr = np.asarray(img.convert("RGB"))
+    except (UnidentifiedImageError, OSError, ValueError):
         arr = None
     if arr is None:
         import tifffile

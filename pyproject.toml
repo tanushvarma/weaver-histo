@@ -58,6 +58,8 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF046"]
+allowed-confusables = ["\u00d7", "\u00b5"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["weaver_histo"]

@@ -2,6 +2,7 @@
 
 Run from the project root:   streamlit run app/streamlit_app.py
 """
+
 import streamlit as st
 
 st.set_page_config(page_title="Weaver Lab Histology Analyzer", layout="wide")
@@ -13,12 +14,18 @@ with st.sidebar:
     st.divider()
 
 if mode == MODES[0]:
-    st.caption("Finds the tissue sections on a slide, analyses them at cell resolution, and learns from your "
-               "corrections: nuclei, cell-state, infiltration, collagen capsule, hydrogel geometry.")
+    st.caption(
+        "Finds the tissue sections on a slide, analyses them at cell resolution, and learns from your "
+        "corrections: nuclei, cell-state, infiltration, collagen capsule, hydrogel geometry."
+    )
     import slide_mode
+
     slide_mode.render()
 else:
-    st.caption("H&E and Masson's trichrome: nuclei, cell-state, infiltration, fibrosis capsule, "
-               "construct geometry. Results are CSV-exportable.")
+    st.caption(
+        "H&E and Masson's trichrome: nuclei, cell-state, infiltration, fibrosis capsule, "
+        "construct geometry. Results are CSV-exportable."
+    )
     import image_mode
+
     image_mode.render()

@@ -1,8 +1,8 @@
 """End-to-end analysis of one H&E or Masson's trichrome image."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -12,19 +12,19 @@ from . import metrics, segment, stains
 
 @dataclass
 class Params:
-    stain: str = "he"                       # "he" | "trichrome"
-    um_per_px: Optional[float] = None       # effective (after any downscale); None = uncalibrated
-    normalization: str = "none"             # "none" | "macenko" | "reinhard"
-    reinhard_target: Optional[tuple] = None  # (mean[3], std[3]) in LAB
-    he_vector_source: str = "reference"     # "reference" | "estimate" (per-image Macenko, opt-in)
+    stain: str = "he"  # "he" | "trichrome"
+    um_per_px: float | None = None  # effective (after any downscale); None = uncalibrated
+    normalization: str = "none"  # "none" | "macenko" | "reinhard"
+    reinhard_target: tuple | None = None  # (mean[3], std[3]) in LAB
+    he_vector_source: str = "reference"  # "reference" | "estimate" (per-image Macenko, opt-in)
 
-    tissue_threshold: Optional[float] = None
-    nuclei_thresh_scale: float = 0.8        # x Otsu; <1 admits fainter ("pale") nuclei
-    nuclei_floor: Optional[float] = None    # default: 0.3 (H&E) / 0.6 (trichrome)
-    nucleus_split_h_um: float = 1.0         # watershed split depth
-    min_object_um2: float = 6.0             # smallest object kept (fragments)
+    tissue_threshold: float | None = None
+    nuclei_thresh_scale: float = 0.8  # x Otsu; <1 admits fainter ("pale") nuclei
+    nuclei_floor: float | None = None  # default: 0.3 (H&E) / 0.6 (trichrome)
+    nucleus_split_h_um: float = 1.0  # watershed split depth
+    min_object_um2: float = 6.0  # smallest object kept (fragments)
 
-    ref_nucleus_area_um2: Optional[float] = None  # override typical nucleus core area (px^2 if uncalibrated)
+    ref_nucleus_area_um2: float | None = None  # override typical nucleus core area (px^2 if uncalibrated)
     fragment_rel_area: float = 0.25
     pyknotic_rel_area: float = 0.60
     pyknotic_rel_dark: float = 1.15
@@ -32,7 +32,7 @@ class Params:
     pyknotic_max_ecc: float = 0.85
     pale_rel_dark: float = 0.60
 
-    matrix_thresh: Optional[float] = None
+    matrix_thresh: float | None = None
     matrix_smooth_um: float = 5.0
     matrix_open_um: float = 3.0
     matrix_min_area_um2: float = 3000.0
@@ -43,8 +43,8 @@ class Params:
     outside_shells_um: tuple = (0, 50, 100, 200)
     inside_shells_um: tuple = (0, 25, 50, 100)
 
-    tri_blue_rgb: Optional[tuple] = None    # override aniline-blue reference colour
-    tri_red_rgb: Optional[tuple] = None     # override red reference colour
+    tri_blue_rgb: tuple | None = None  # override aniline-blue reference colour
+    tri_red_rgb: tuple | None = None  # override red reference colour
 
 
 @dataclass
@@ -52,18 +52,18 @@ class Result:
     params: Params
     summary: dict
     cells: pd.DataFrame
-    rgb: np.ndarray                 # image actually analysed (after normalisation)
+    rgb: np.ndarray  # image actually analysed (after normalisation)
     tissue: np.ndarray
     labels: np.ndarray
     matrix: np.ndarray
-    collagen: Optional[np.ndarray]
-    signal: np.ndarray              # nuclear signal (H conc. or darkness)
-    second: np.ndarray              # eosin (H&E) or collagen (trichrome) channel
-    signed: Optional[np.ndarray]
+    collagen: np.ndarray | None
+    signal: np.ndarray  # nuclear signal (H conc. or darkness)
+    second: np.ndarray  # eosin (H&E) or collagen (trichrome) channel
+    signed: np.ndarray | None
     notes: list = field(default_factory=list)
 
 
-def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] = None) -> Result:
+def analyze(rgb: np.ndarray, params: Params, matrix_mask: np.ndarray | None = None) -> Result:
     p = params
     cal = p.um_per_px is not None
     s = float(p.um_per_px) if cal else 1.0
@@ -72,7 +72,6 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
     if not cal:
         notes.append("Uncalibrated: lengths are in pixels. Enter um/px for micron units.")
 
-    # ---- tissue + optional normalisation
     tissue, tissue_thr = segment.tissue_mask(rgb, p.tissue_threshold, s)
     rgb_n = rgb
     if p.normalization == "macenko":
@@ -90,7 +89,6 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
     if tissue.sum() < 1000:
         notes.append("Very little tissue detected; check the tissue threshold.")
 
-    # ---- stain separation
     if p.stain == "he":
         W = stains.HE_REF_VECTORS
         if p.he_vector_source == "estimate" and p.normalization != "macenko":
@@ -113,16 +111,21 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
         matrix_signal = collagen_conc + red_conc
         floor = 0.6 if p.nuclei_floor is None else p.nuclei_floor
 
-    # ---- nuclei
     labels, nuc_thr = segment.segment_nuclei(
-        signal, tissue, p.nuclei_thresh_scale, floor, s,
-        min_object_um2=p.min_object_um2, split=True, split_h_um=p.nucleus_split_h_um)
+        signal,
+        tissue,
+        p.nuclei_thresh_scale,
+        floor,
+        s,
+        min_object_um2=p.min_object_um2,
+        split=True,
+        split_h_um=p.nucleus_split_h_um,
+    )
     cells = metrics.nucleus_table(labels, signal)
     ref_px = p.ref_nucleus_area_um2 / (s * s) if p.ref_nucleus_area_um2 else None
     cells, ref = metrics.classify_nuclei(cells, p, ref_area_px=ref_px)
     nuclei_bin = labels > 0
 
-    # ---- matrix (hydrogel)
     matrix_thr = None
     if matrix_mask is not None:
         if matrix_mask.shape != tissue.shape:
@@ -130,25 +133,27 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
         matrix = matrix_mask.astype(bool)
     else:
         matrix, matrix_thr = segment.matrix_from_signal(
-            matrix_signal, tissue, nuclei_bin,
+            matrix_signal,
+            tissue,
+            nuclei_bin,
             smooth_px=max(2.0, p.matrix_smooth_um / s),
             thresh=p.matrix_thresh,
             open_px=max(1, int(round(p.matrix_open_um / s))),
             min_area_px=max(300.0, p.matrix_min_area_um2 / (s * s)),
-            hole_px=max(50.0, p.matrix_hole_um2 / (s * s)))
+            hole_px=max(50.0, p.matrix_hole_um2 / (s * s)),
+        )
         if not matrix.any():
-            notes.append("No matrix/hydrogel region found automatically; "
-                         "infiltration and capsule metrics are blank. Adjust the matrix "
-                         "threshold or upload a hand-drawn matrix mask.")
+            notes.append(
+                "No matrix/hydrogel region found automatically; "
+                "infiltration and capsule metrics are blank. Adjust the matrix "
+                "threshold or upload a hand-drawn matrix mask."
+            )
 
-    # ---- collagen (trichrome)
     collagen = None
     collagen_thr = None
     if p.stain == "trichrome":
-        collagen, collagen_thr = segment.collagen_mask(
-            second, tissue, nuclei_bin, p.collagen_thresh_scale, s=s)
+        collagen, collagen_thr = segment.collagen_mask(second, tissue, nuclei_bin, p.collagen_thresh_scale, s=s)
 
-    # ---- distances, regions
     signed = metrics.signed_distance(matrix)
     if len(cells):
         if signed is not None:
@@ -161,44 +166,48 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
         cells["dist_to_matrix_edge_px"] = []
         cells["region"] = []
 
-    # ---- tidy per-cell table in physical units (built explicitly: in pixel mode a
-    # converted name such as perimeter_px equals its source name)
-    cells_out = pd.DataFrame({
-        "label": cells["label"].to_numpy(),
-        "state": cells["state"].to_numpy(),
-        "region": cells["region"].to_numpy(),
-        f"x_{U}": cells["cx"].to_numpy() * s,
-        f"y_{U}": cells["cy"].to_numpy() * s,
-        f"area_{U}2": cells["area_px"].to_numpy() * s * s,
-        f"core_area_{U}2": cells["core_area_px"].to_numpy() * s * s,
-        f"dist_to_matrix_edge_{U}": cells["dist_to_matrix_edge_px"].to_numpy(float) * s,
-        f"perimeter_{U}": cells["perimeter_px"].to_numpy() * s,
-        f"major_axis_{U}": cells["major_axis_px"].to_numpy() * s,
-        f"minor_axis_{U}": cells["minor_axis_px"].to_numpy() * s,
-        "eccentricity": cells["eccentricity"].to_numpy(),
-        "solidity": cells["solidity"].to_numpy(),
-        "circularity": cells["circularity"].to_numpy(),
-        "rel_area": cells["rel_area"].to_numpy(),
-        "rel_dark": cells["rel_dark"].to_numpy(),
-        "mean_signal": cells["mean_signal"].to_numpy(),
-        "core_mean_signal": cells["core_mean_signal"].to_numpy(),
-        "max_signal": cells["max_signal"].to_numpy(),
-        "std_signal": cells["std_signal"].to_numpy(),
-    })
+    # Built column by column: in pixel mode a converted name such as perimeter_px equals its source name.
+    cells_out = pd.DataFrame(
+        {
+            "label": cells["label"].to_numpy(),
+            "state": cells["state"].to_numpy(),
+            "region": cells["region"].to_numpy(),
+            f"x_{U}": cells["cx"].to_numpy() * s,
+            f"y_{U}": cells["cy"].to_numpy() * s,
+            f"area_{U}2": cells["area_px"].to_numpy() * s * s,
+            f"core_area_{U}2": cells["core_area_px"].to_numpy() * s * s,
+            f"dist_to_matrix_edge_{U}": cells["dist_to_matrix_edge_px"].to_numpy(float) * s,
+            f"perimeter_{U}": cells["perimeter_px"].to_numpy() * s,
+            f"major_axis_{U}": cells["major_axis_px"].to_numpy() * s,
+            f"minor_axis_{U}": cells["minor_axis_px"].to_numpy() * s,
+            "eccentricity": cells["eccentricity"].to_numpy(),
+            "solidity": cells["solidity"].to_numpy(),
+            "circularity": cells["circularity"].to_numpy(),
+            "rel_area": cells["rel_area"].to_numpy(),
+            "rel_dark": cells["rel_dark"].to_numpy(),
+            "mean_signal": cells["mean_signal"].to_numpy(),
+            "core_mean_signal": cells["core_mean_signal"].to_numpy(),
+            "max_signal": cells["max_signal"].to_numpy(),
+            "std_signal": cells["std_signal"].to_numpy(),
+        }
+    )
 
-    # ---- summary
     dens_unit = "per_mm2" if cal else "per_Mpx2"
     tissue_area_px = float(tissue.sum())
     S: dict = {
-        "stain": p.stain, "normalization": p.normalization,
+        "stain": p.stain,
+        "normalization": p.normalization,
         "um_per_px": p.um_per_px if cal else float("nan"),
-        "tissue_threshold": tissue_thr, "nuclei_threshold": nuc_thr,
+        "tissue_threshold": tissue_thr,
+        "nuclei_threshold": nuc_thr,
         "matrix_threshold": matrix_thr if matrix_thr is not None else float("nan"),
         "matrix_source": "user_mask" if matrix_mask is not None else "auto",
         f"tissue_area_{U}2": tissue_area_px * s * s,
         "n_objects": int(len(cells)),
         f"nuclei_{dens_unit}": len(cells) / (tissue_area_px * s * s) * 1e6 if tissue_area_px else float("nan"),
-        "nuclear_area_pct_of_tissue": 100 * float(nuclei_bin.sum()) / tissue_area_px if tissue_area_px else float("nan"),
+        "nuclear_area_pct_of_tissue": 100 * float(nuclei_bin.sum()) / tissue_area_px
+        if tissue_area_px
+        else float("nan"),
         f"ref_nucleus_area_{U}2": ref["ref_area_px"] * s * s,
     }
     S.update(metrics.state_summary(cells))
@@ -215,8 +224,7 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
         S[f"infiltration_depth_median_{U}"] = float(np.median(depth)) if depth.size else float("nan")
         S[f"infiltration_depth_p90_{U}"] = float(np.percentile(depth, 90)) if depth.size else float("nan")
         S[f"infiltration_depth_max_{U}"] = float(depth.max()) if depth.size else float("nan")
-        S.update(metrics.shell_densities(cells, signed, tissue, matrix, s, U,
-                                         p.outside_shells_um, p.inside_shells_um))
+        S.update(metrics.shell_densities(cells, signed, tissue, matrix, s, U, p.outside_shells_um, p.inside_shells_um))
     if signed is not None:
         S.update(metrics.construct_geometry(matrix, s, U))
         S["matrix_area_pct_of_tissue"] = 100 * float(matrix.sum()) / tissue_area_px if tissue_area_px else float("nan")
@@ -227,6 +235,17 @@ def analyze(rgb: np.ndarray, params: Params, matrix_mask: Optional[np.ndarray] =
     S["clark_evans_R"] = ce
     S[f"nn_distance_mean_{U}"] = nn * s if np.isfinite(nn) else float("nan")
 
-    return Result(params=p, summary=S, cells=cells_out, rgb=rgb_n, tissue=tissue,
-                  labels=labels, matrix=matrix, collagen=collagen, signal=signal,
-                  second=second, signed=signed, notes=notes)
+    return Result(
+        params=p,
+        summary=S,
+        cells=cells_out,
+        rgb=rgb_n,
+        tissue=tissue,
+        labels=labels,
+        matrix=matrix,
+        collagen=collagen,
+        signal=signal,
+        second=second,
+        signed=signed,
+        notes=notes,
+    )

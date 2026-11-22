@@ -1,6 +1,9 @@
 """Quantification: per-nucleus features, nuclear-state classes, infiltration,
 capsule/fibrosis, construct geometry and spatial statistics."""
+
 from __future__ import annotations
+
+from itertools import pairwise
 
 import numpy as np
 import pandas as pd
@@ -11,60 +14,86 @@ from skimage import measure, morphology
 CLASSES = ("intact", "pyknotic", "pale", "fragment")
 
 
-# ---------------------------------------------------------------- per nucleus
 def nucleus_table(labels: np.ndarray, signal: np.ndarray) -> pd.DataFrame:
-    cols = ["label", "cy", "cx", "area_px", "core_area_px", "perimeter_px", "major_axis_px",
-            "minor_axis_px", "eccentricity", "solidity", "circularity",
-            "mean_signal", "core_mean_signal", "max_signal", "std_signal"]
+    cols = [
+        "label",
+        "cy",
+        "cx",
+        "area_px",
+        "core_area_px",
+        "perimeter_px",
+        "major_axis_px",
+        "minor_axis_px",
+        "eccentricity",
+        "solidity",
+        "circularity",
+        "mean_signal",
+        "core_mean_signal",
+        "max_signal",
+        "std_signal",
+    ]
     if labels.max() == 0:
         return pd.DataFrame(columns=cols)
 
-    def std_signal(regionmask, intensity):
+    def std_signal(regionmask, intensity) -> float:
         return float(np.std(intensity[regionmask]))
 
     # "Core" = pixels at >= half of the object's own peak (95th percentile).
     # A fixed global threshold gives very dark small nuclei a wide halo, which
-    # inflates their area and dilutes their mean; the core is robust to that.
-    def core_area(regionmask, intensity):
+    # inflates their area and dilutes their mean; the core is not affected by it.
+    def core_area(regionmask, intensity) -> float:
         v = intensity[regionmask]
         return float((v >= 0.5 * np.percentile(v, 95)).sum())
 
-    def core_mean_signal(regionmask, intensity):
+    def core_mean_signal(regionmask, intensity) -> float:
         v = intensity[regionmask]
         return float(v[v >= 0.5 * np.percentile(v, 95)].mean())
 
     t = measure.regionprops_table(
-        labels, intensity_image=signal,
-        properties=("label", "area", "centroid", "perimeter", "major_axis_length",
-                    "minor_axis_length", "eccentricity", "solidity",
-                    "intensity_mean", "intensity_max"),
+        labels,
+        intensity_image=signal,
+        properties=(
+            "label",
+            "area",
+            "centroid",
+            "perimeter",
+            "major_axis_length",
+            "minor_axis_length",
+            "eccentricity",
+            "solidity",
+            "intensity_mean",
+            "intensity_max",
+        ),
         extra_properties=(std_signal, core_area, core_mean_signal),
     )
-    df = pd.DataFrame({
-        "label": t["label"], "cy": t["centroid-0"], "cx": t["centroid-1"],
-        "area_px": t["area"], "core_area_px": t["core_area"], "perimeter_px": t["perimeter"],
-        "major_axis_px": t["major_axis_length"], "minor_axis_px": t["minor_axis_length"],
-        "eccentricity": t["eccentricity"], "solidity": t["solidity"],
-        "mean_signal": t["intensity_mean"], "core_mean_signal": t["core_mean_signal"],
-        "max_signal": t["intensity_max"],
-        "std_signal": t["std_signal"],
-    })
+    df = pd.DataFrame(
+        {
+            "label": t["label"],
+            "cy": t["centroid-0"],
+            "cx": t["centroid-1"],
+            "area_px": t["area"],
+            "core_area_px": t["core_area"],
+            "perimeter_px": t["perimeter"],
+            "major_axis_px": t["major_axis_length"],
+            "minor_axis_px": t["minor_axis_length"],
+            "eccentricity": t["eccentricity"],
+            "solidity": t["solidity"],
+            "mean_signal": t["intensity_mean"],
+            "core_mean_signal": t["core_mean_signal"],
+            "max_signal": t["intensity_max"],
+            "std_signal": t["std_signal"],
+        }
+    )
     per = np.maximum(df["perimeter_px"].to_numpy(), 1e-6)
-    df["circularity"] = np.clip(4 * np.pi * df["area_px"].to_numpy() / per ** 2, 0, 1)
+    df["circularity"] = np.clip(4 * np.pi * df["area_px"].to_numpy() / per**2, 0, 1)
     return df[cols]
 
 
 def classify_nuclei(df: pd.DataFrame, p, ref_area_px=None) -> tuple[pd.DataFrame, dict]:
-    """Nuclear-state classes from size, density, roundness (relative to the
-    image's own typical nucleus, so no absolute calibration is needed).
-
-    Size and darkness are measured on each nucleus's half-peak core.
-
-    fragment : much smaller than a typical nucleus (karyorrhexis proxy)
-    pyknotic : small, dark, round, compact (pyknosis proxy)
-    pale     : normal size but faint (karyolysis / ghost-nucleus proxy)
-    intact   : everything else
-    """
+    """Classify nuclei as intact, pyknotic, pale or fragment, relative to the image's typical nucleus."""
+    # Size and darkness are measured on each nucleus's half-peak core. fragment: much smaller than
+    # typical (karyorrhexis proxy); pyknotic: small, dark, round, compact; pale: normal size but
+    # faint (karyolysis proxy); intact: everything else.
     df = df.copy()
     if df.empty:
         df["rel_area"] = df["rel_dark"] = []
@@ -72,10 +101,7 @@ def classify_nuclei(df: pd.DataFrame, p, ref_area_px=None) -> tuple[pd.DataFrame
         return df, {"ref_area_px": np.nan, "ref_signal": np.nan}
     area = df["core_area_px"].to_numpy(float)
     med_all = float(np.median(area))
-    if ref_area_px:
-        ref_area = float(ref_area_px)
-    else:
-        ref_area = float(np.median(area[area >= 0.5 * med_all]))
+    ref_area = float(ref_area_px) if ref_area_px else float(np.median(area[area >= 0.5 * med_all]))
     big = area >= 0.5 * ref_area
     sig = df["core_mean_signal"].to_numpy(float)
     ref_sig = float(np.median(sig[big])) if big.any() else float(np.median(sig))
@@ -83,9 +109,12 @@ def classify_nuclei(df: pd.DataFrame, p, ref_area_px=None) -> tuple[pd.DataFrame
 
     state = np.full(len(df), "intact", dtype=object)
     state[(rel_dark < p.pale_rel_dark) & (rel_area >= p.pyknotic_rel_area)] = "pale"
-    pyk = ((rel_area < p.pyknotic_rel_area) & (rel_dark > p.pyknotic_rel_dark)
-           & (df["solidity"].to_numpy() > p.pyknotic_min_solidity)
-           & (df["eccentricity"].to_numpy() < p.pyknotic_max_ecc))
+    pyk = (
+        (rel_area < p.pyknotic_rel_area)
+        & (rel_dark > p.pyknotic_rel_dark)
+        & (df["solidity"].to_numpy() > p.pyknotic_min_solidity)
+        & (df["eccentricity"].to_numpy() < p.pyknotic_max_ecc)
+    )
     state[pyk] = "pyknotic"
     state[rel_area < p.fragment_rel_area] = "fragment"
     df["rel_area"], df["rel_dark"], df["state"] = rel_area, rel_dark, state
@@ -110,8 +139,7 @@ def state_summary(df: pd.DataFrame, prefix: str = "") -> dict:
     }
 
 
-# ------------------------------------------------------------------- geometry
-def signed_distance(matrix: np.ndarray):
+def signed_distance(matrix: np.ndarray) -> np.ndarray | None:
     """Pixels from the matrix edge: positive outside, negative inside."""
     if not matrix.any():
         return None
@@ -151,41 +179,43 @@ def construct_geometry(matrix: np.ndarray, s: float, U: str) -> dict:
     return out
 
 
-def shell_densities(cells, signed, tissue, matrix, s, U, outside_edges, inside_edges):
+def shell_densities(cells, signed, tissue, matrix, s, U, outside_edges, inside_edges) -> dict[str, float]:
     """Nuclei per mm^2 (per Mpx^2 if uncalibrated) in shells outside/inside the matrix."""
     out = {}
     dens_unit = "per_mm2" if U == "um" else "per_Mpx2"
     d_px = cells["dist_to_matrix_edge_px"].to_numpy()
-    for lo, hi in zip(outside_edges[:-1], outside_edges[1:]):
+    for lo, hi in pairwise(outside_edges):
         area_px = float(((signed > lo / s) & (signed <= hi / s) & tissue).sum())
         n = int(((d_px > lo / s) & (d_px <= hi / s)).sum())
         out[f"density_outside_{lo}_{hi}{U}_{dens_unit}"] = n / (area_px * s * s) * 1e6 if area_px else float("nan")
-    for lo, hi in zip(inside_edges[:-1], inside_edges[1:]):
+    for lo, hi in pairwise(inside_edges):
         area_px = float(((-signed >= lo / s) & (-signed < hi / s) & matrix).sum())
         n = int(((-d_px >= lo / s) & (-d_px < hi / s) & (d_px < 0)).sum())
         out[f"density_inside_{lo}_{hi}{U}_{dens_unit}"] = n / (area_px * s * s) * 1e6 if area_px else float("nan")
     return out
 
 
-def capsule_metrics(collagen, matrix, signed, tissue, s, U, search_um, touch_um=3.0):
-    """Collagen capsule around the matrix.
-
-    The capsule is the collagen that touches the matrix edge and lies within
-    `search_um` of it. Thickness is the local width of that layer (2 x distance
-    to the layer edge, sampled along its skeleton), so a thin sliver and a
-    40 um capsule give different answers. It is capped by `search_um`: a capsule
-    that continues into thick collagenous stroma reads as the search distance.
-    Coverage is the share of the matrix edge that has collagen right against it."""
+def capsule_metrics(collagen, matrix, signed, tissue, s, U, search_um, touch_um=3.0) -> dict[str, float]:
+    """Thickness, coverage and area of the collagen capsule around the matrix."""
+    # The capsule is collagen touching the matrix edge within search_um of it. Thickness is the local
+    # width of that layer (2 x distance to its edge, sampled along the skeleton), capped at search_um.
+    # Coverage is the share of the matrix edge with collagen right against it.
     out = {}
     tissue_area = float(tissue.sum())
-    out["collagen_area_pct_of_tissue"] = 100 * float((collagen & tissue).sum()) / tissue_area if tissue_area else float("nan")
+    out["collagen_area_pct_of_tissue"] = (
+        100 * float((collagen & tissue).sum()) / tissue_area if tissue_area else float("nan")
+    )
     if signed is None or not matrix.any():
         return out
     out["collagen_area_pct_inside_matrix"] = 100 * float((collagen & matrix).sum()) / float(matrix.sum())
 
     touch_px = max(2.0, touch_um / s)
-    zero = {f"capsule_thickness_median_{U}": 0.0, f"capsule_thickness_mean_{U}": 0.0,
-            f"capsule_thickness_p90_{U}": 0.0, "capsule_coverage_pct": 0.0}
+    zero = {
+        f"capsule_thickness_median_{U}": 0.0,
+        f"capsule_thickness_mean_{U}": 0.0,
+        f"capsule_thickness_p90_{U}": 0.0,
+        "capsule_coverage_pct": 0.0,
+    }
     layer = collagen & (signed > 0) & (signed <= search_um / s)
     lab, n = ndi.label(layer)
     if n == 0:
@@ -208,8 +238,7 @@ def capsule_metrics(collagen, matrix, signed, tissue, s, U, search_um, touch_um=
     return out
 
 
-# -------------------------------------------------------------------- spatial
-def clark_evans(cy, cx, area_px):
+def clark_evans(cy, cx, area_px) -> tuple[float, float]:
     """Clark-Evans nearest-neighbour ratio: <1 clustered, ~1 random, >1 regular."""
     n = len(cy)
     if n < 5 or area_px <= 0:
